@@ -7,6 +7,7 @@ import tempfile
 import shutil
 import requests
 import threading
+import subprocess
 
 from kivy.app import App
 from kivy.clock import Clock
@@ -37,21 +38,19 @@ else:
     default_target_dll = os.path.expanduser("~/Balatro")
     default_mod_target = os.path.expanduser("~/.balatro/mods")
 
-# ----- Hover Behavior and Custom Button Classes -----
-class HoverBehavior(object):
+# ----- Custom Hover Button Class -----
+class HoverButton(Button):
     hovered = BooleanProperty(False)
     def __init__(self, **kwargs):
-        super(HoverBehavior, self).__init__(**kwargs)
-        Window.bind(mouse_pos=self.on_mouse_pos)
-    def on_mouse_pos(self, window, pos):
-        if not self.get_root_window():
-            return
-        self.hovered = self.collide_point(*self.to_widget(*pos))
+        super().__init__(**kwargs)
+        Window.bind(mouse_pos=self.on_mouseover)
+    def on_mouseover(self, window, pos):
+        if self.get_root_window() and self.collide_point(*self.to_widget(*pos)):
+            self.hovered = True
+        else:
+            self.hovered = False
 
-class HoverButton(HoverBehavior, Button):
-    pass
-
-# ----- KV Language Styling (Elegant Look) -----
+# ----- KV Language Styling (Rounded edges and hover effects) -----
 Builder.load_string('''
 #:import dp kivy.metrics.dp
 
@@ -59,20 +58,16 @@ Builder.load_string('''
     color: 1, 1, 1, 1
     font_size: '20sp'
     bold: True
-    size_hint_y: None
-    height: dp(50)
-    padding: dp(10), 0
-    canvas.before:
-        Color:
-            rgba: 0.1, 0.1, 0.2, 1
-        Rectangle:
-            pos: self.pos
-            size: self.size
+    size_hint_x: 0.8
+    halign: 'left'
+    valign: 'middle'
+    text_size: self.size
 
 <StatusBar@BoxLayout>:
     size_hint_y: None
     height: dp(40)
     padding: dp(10)
+    spacing: dp(10)
     canvas.before:
         Color:
             rgba: 0.15, 0.15, 0.2, 1
@@ -106,6 +101,8 @@ Builder.load_string('''
 
 <ThemedButton@HoverButton>:
     background_normal: ''
+    background_down: ''
+    on_hovered: self.canvas.ask_update()
     background_color: 0.25, 0.5, 0.8, 1
     color: 1, 1, 1, 1
     font_size: '14sp'
@@ -113,14 +110,16 @@ Builder.load_string('''
     height: dp(40)
     canvas.before:
         Color:
-            rgba: self.background_color if not self.hovered else (min(self.background_color[0]+0.1, 1), min(self.background_color[1]+0.1, 1), min(self.background_color[2]+0.1, 1), 1)
+            rgba: self.background_color if not self.hovered else (min(self.background_color[0] + 0.1, 1), min(self.background_color[1] + 0.1, 1), min(self.background_color[2] + 0.1, 1), 1)
         RoundedRectangle:
             pos: self.pos
             size: self.size
-            radius: [dp(10)]
+            radius: [dp(8)]
 
 <DangerButton@HoverButton>:
     background_normal: ''
+    background_down: ''
+    on_hovered: self.canvas.ask_update()
     background_color: 0.8, 0.3, 0.3, 1
     color: 1, 1, 1, 1
     font_size: '14sp'
@@ -128,11 +127,11 @@ Builder.load_string('''
     height: dp(40)
     canvas.before:
         Color:
-            rgba: self.background_color if not self.hovered else (min(self.background_color[0]+0.1, 1), min(self.background_color[1]+0.1, 1), min(self.background_color[2]+0.1, 1), 1)
+            rgba: self.background_color if not self.hovered else (min(self.background_color[0] + 0.1, 1), min(self.background_color[1] + 0.1, 1), min(self.background_color[2] + 0.1, 1), 1)
         RoundedRectangle:
             pos: self.pos
             size: self.size
-            radius: [dp(10)]
+            radius: [dp(8)]
 
 <ThemedSpinner@Spinner>:
     background_color: 0.25, 0.5, 0.8, 1
@@ -248,9 +247,14 @@ class BalatroManagerApp(App):
 
         main_layout = BoxLayout(orientation='vertical', spacing=0, padding=0)
 
-        # Header.
-        header = Factory.HeaderLabel(text="Balatro Mod & Injector Manager")
-        main_layout.add_widget(header)
+        # Custom Header: Title on left, Launch button on right.
+        header_layout = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(50), padding=[dp(10),0])
+        title_label = Factory.HeaderLabel(text="Balatro Mod & Injector Manager")
+        launch_button = Factory.ThemedButton(text="Launch Balatro", size_hint_x=None, width=dp(150))
+        launch_button.bind(on_press=self.launch_balatro)
+        header_layout.add_widget(title_label)
+        header_layout.add_widget(launch_button)
+        main_layout.add_widget(header_layout)
 
         # Always-visible Status Bar.
         status_bar = Factory.StatusBar()
@@ -492,6 +496,22 @@ class BalatroManagerApp(App):
         except Exception as e:
             print("Error saving config:", e)
 
+    # ----- Launch Balatro -----
+    def launch_balatro(self, instance):
+        target_dir = self.clean_path(self.target_dll_input.text)
+        if platform.system() == "Windows":
+            exe_name = "balatro.exe"
+        else:
+            exe_name = "balatro"
+        exe_path = os.path.join(target_dir, exe_name)
+        if os.path.isfile(exe_path):
+            try:
+                subprocess.Popen([exe_path])
+            except Exception as e:
+                self.show_notification("Failed to launch Balatro: " + str(e))
+        else:
+            self.show_notification("Balatro executable not found in target directory.")
+
     # ----- Download Lovely in a separate thread -----
     def start_download_lovely(self, instance):
         self.lovely_progress.value = 0
@@ -607,15 +627,24 @@ class BalatroManagerApp(App):
 
     def uninstall_lovely(self, instance):
         target_dir = self.clean_path(self.target_dll_input.text)
+        mod_dir = self.clean_path(self.mod_target_input.text)
         target_dll_path = os.path.join(target_dir, "version.dll")
+        lovely_dir_path = os.path.join(mod_dir, "lovely")
+        errors = []
         if os.path.isfile(target_dll_path):
             try:
                 os.remove(target_dll_path)
-                self.update_lovely_status("Lovely successfully uninstalled.", (0.3, 0.7, 0.9, 1))
             except Exception as e:
-                self.update_lovely_status(f"Uninstall failed: {e}", (0.8, 0.3, 0.3, 1))
+                errors.append(str(e))
+        if os.path.isdir(lovely_dir_path):
+            try:
+                shutil.rmtree(lovely_dir_path)
+            except Exception as e:
+                errors.append(str(e))
+        if errors:
+            self.update_lovely_status("Uninstall failed: " + ", ".join(errors), (0.8, 0.3, 0.3, 1))
         else:
-            self.update_lovely_status("Lovely is not installed in target directory.", (0.8, 0.7, 0.3, 1))
+            self.update_lovely_status("Lovely successfully uninstalled.", (0.3, 0.7, 0.9, 1))
 
     def flatten_mod_directory(self, mod_dir, target_parent):
         if not os.path.exists(mod_dir):

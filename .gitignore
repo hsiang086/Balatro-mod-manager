@@ -43,3 +43,11 @@ config.json
 
 # Lovely
 lovely/
+
+# Nuitka build
+main.build/
+main.dist/
+main.onefile-build/
+
+# Executable
+*.exe
